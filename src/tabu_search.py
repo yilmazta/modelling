@@ -115,10 +115,11 @@ class SSCFLPTabuSearch:
         Increase alpha when infeasible, decrease when feasible.
         """
         factor = 1.0 + self.epsilon
+        alpha_min, alpha_max = 1e-6, 1e6  # clamp to avoid overflow / stagnation
         if feasible:
-            self.alpha = max(1e-6, self.alpha / factor)
+            self.alpha = max(alpha_min, self.alpha / factor)
         else:
-            self.alpha = self.alpha * factor
+            self.alpha = min(alpha_max, self.alpha * factor)
 
     # ------------------------------------------------------------------ #
     # Neighborhood generation                                            #
@@ -154,7 +155,7 @@ class SSCFLPTabuSearch:
         return moves
 
     # ------------------------------------------------------------------ #
-    # Delta evaluation (no deepcopy)                                     #
+    # Delta evaluation                                                   #
     # ------------------------------------------------------------------ #
     def _delta_violation(self, load_old: float, load_new: float, cap: float) -> float:
         return max(load_new - cap, 0.0) - max(load_old - cap, 0.0)
@@ -320,7 +321,7 @@ class SSCFLPTabuSearch:
         solution["open_facilities"].sort()
 
     # ------------------------------------------------------------------ #
-    # Tabu handling with dynamic tenure (Section 3.2.3)                  #
+    # Tabu handling with dynamic tenure                                  #
     # ------------------------------------------------------------------ #
     def _is_tabu(self, move: Tuple[str, Tuple], iteration: int) -> bool:
         move_type, data = move
@@ -361,7 +362,7 @@ class SSCFLPTabuSearch:
                 self.tabu_dict[(j, prev)] = iteration + tenure
 
     # ------------------------------------------------------------------ #
-    # Perturbation (unchanged in spirit, lightweight reassign)           #
+    # Perturbation operators (Section 3.3)                               #
     # ------------------------------------------------------------------ #
     def _reassign_all_to_open(self, solution: Dict[str, Any]) -> None:
         open_f = solution["open_facilities"]
@@ -391,48 +392,157 @@ class SSCFLPTabuSearch:
         )
         solution["is_feasible"] = solution["total_violation"] == 0.0
 
-    def _perturb_operator7(self, solution: Dict[str, Any]) -> bool:
-        open_f = set(solution["open_facilities"])
-        closed_f = [i for i in range(self.m) if i not in open_f]
-        if len(open_f) < 2 or not closed_f:
-            return False
+    def _op1_close(self, new_sol: Dict[str, Any]) -> None:
+        open_set = set(new_sol["open_facilities"])
+        if len(open_set) > 1:
+            open_set.remove(self.rng.choice(list(open_set)))
+        new_sol["open_facilities"] = sorted(open_set)
+        new_sol["open_set"] = set(open_set)
 
-        best_combo = None
-        best_delta = float("inf")
-        samples = min(50, len(closed_f) * max(1, len(open_f) - 1))
-        for _ in range(samples):
-            c = self.rng.choice(closed_f)
-            a, b = self.rng.sample(list(open_f), 2)
-            delta_fixed = self.fixed_costs[c] - (self.fixed_costs[a] + self.fixed_costs[b])
-            if delta_fixed < best_delta:
-                best_delta = delta_fixed
-                best_combo = (c, a, b)
+    def _op2_open(self, new_sol: Dict[str, Any]) -> None:
+        open_set = set(new_sol["open_facilities"])
+        closed = [i for i in range(self.m) if i not in open_set]
+        if closed:
+            open_set.add(self.rng.choice(closed))
+        new_sol["open_facilities"] = sorted(open_set)
+        new_sol["open_set"] = set(open_set)
 
-        if best_combo is None:
-            return False
+    def _op3_swap_open_close(self, new_sol: Dict[str, Any]) -> None:
+        open_set = set(new_sol["open_facilities"])
+        closed = [i for i in range(self.m) if i not in open_set]
+        if open_set and closed:
+            open_set.remove(self.rng.choice(list(open_set)))
+            open_set.add(self.rng.choice(closed))
+        new_sol["open_facilities"] = sorted(open_set)
+        new_sol["open_set"] = set(open_set)
 
-        c, a, b = best_combo
-        new_open = [f for f in solution["open_facilities"] if f not in (a, b)]
-        new_open.append(c)
-        solution["open_facilities"] = sorted(set(new_open))
-        solution["open_set"] = set(solution["open_facilities"])
-        self._reassign_all_to_open(solution)
-        return True
+    def _op4_shuffle_assignments(self, new_sol: Dict[str, Any]) -> None:
+        # Keep open set; perform a random assignment to diversify
+        open_set = set(new_sol["open_facilities"])
+        assignments = new_sol["assignments"]
+        counts = new_sol["counts"]
+        load = new_sol["load"]
 
-    def _perturb_fallback_close1(self, solution: Dict[str, Any]) -> None:
-        if len(solution["open_facilities"]) <= 1:
+        counts.fill(0)
+        load.fill(0.0)
+        assign_cost = 0.0
+
+        if not open_set:
             return
-        close_f = self.rng.choice(solution["open_facilities"])
-        solution["open_facilities"] = [f for f in solution["open_facilities"] if f != close_f]
-        solution["open_set"] = set(solution["open_facilities"])
-        self._reassign_all_to_open(solution)
+        open_list = list(open_set)
+        for j in range(self.n):
+            i = self.rng.choice(open_list)
+            assignments[j] = i
+            counts[i] += 1
+            load[i] += self.demands[j]
+            assign_cost += self.assignment_costs[i][j]
 
-    def perturb(self, solution: Dict[str, Any]) -> Dict[str, Any]:
+        new_sol["open_facilities"] = sorted(open_set)
+        new_sol["open_set"] = set(open_set)
+        # finalize costs/violations
+        self._reassign_all_to_open(new_sol)
+
+    def _op5_close_half(self, new_sol: Dict[str, Any]) -> None:
+        open_set = set(new_sol["open_facilities"])
+        if len(open_set) > 1:
+            k = max(1, len(open_set) // 2)
+            to_close = self.rng.sample(list(open_set), k=k)
+            for f in to_close:
+                if len(open_set) > 1:
+                    open_set.discard(f)
+        new_sol["open_facilities"] = sorted(open_set)
+        new_sol["open_set"] = set(open_set)
+
+    def _op6_close1_open2(self, new_sol: Dict[str, Any]) -> None:
+        open_set = set(new_sol["open_facilities"])
+        closed = [i for i in range(self.m) if i not in open_set]
+        if open_set:
+            open_set.discard(self.rng.choice(list(open_set)))
+        if closed:
+            add_count = min(2, len(closed))
+            open_set.update(self.rng.sample(closed, k=add_count))
+        new_sol["open_facilities"] = sorted(open_set)
+        new_sol["open_set"] = set(open_set)
+
+    def _op7_open1_close2(self, new_sol: Dict[str, Any]) -> None:
+        open_set = set(new_sol["open_facilities"])
+        closed = [i for i in range(self.m) if i not in open_set]
+        if closed:
+            open_set.add(self.rng.choice(closed))
+        close_count = min(2, max(0, len(open_set) - 1))
+        if close_count > 0:
+            to_close = self.rng.sample(list(open_set), k=close_count)
+            for f in to_close:
+                if len(open_set) > 1:
+                    open_set.discard(f)
+        new_sol["open_facilities"] = sorted(open_set)
+        new_sol["open_set"] = set(open_set)
+
+    def perturb(self, solution: Dict[str, Any], stagnation_counter: int) -> Dict[str, Any]:
+        """
+        Hybrid perturbation (Section 3.3).
+        - If stagnation_counter < max_stagnation: pick one of Operators 1-5.
+        - Else: pick one of Operators 6-7 (strong).
+        Always uses sets to avoid duplicates and reassigns at the end.
+        """
         new_sol = deepcopy(solution)
-        success = self._perturb_operator7(new_sol)
-        if not success:
-            self._perturb_fallback_close1(new_sol)
+        new_sol["open_facilities"] = sorted(set(new_sol.get("open_facilities", [])))
+        new_sol["open_set"] = set(new_sol["open_facilities"])
+
+        simple_ops = [
+            self._op1_close,
+            self._op2_open,
+            self._op3_swap_open_close,
+            self._op4_shuffle_assignments,
+            self._op5_close_half,
+        ]
+        strong_ops = [self._op6_close1_open2, self._op7_open1_close2]
+
+        if stagnation_counter < self.max_stagnation:
+            op = self.rng.choice(simple_ops)
+        else:
+            op = self.rng.choice(strong_ops)
+
+        op(new_sol)
+        # Ensure full recomputation and duplicate safety
+        new_sol["open_facilities"] = sorted(set(new_sol.get("open_facilities", [])))
+        new_sol["open_set"] = set(new_sol["open_facilities"])
+        self._reassign_all_to_open(new_sol)
         return new_sol
+
+    def _greedy_drop(self, solution: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Post-optimization: iteratively try closing open facilities (high fixed
+        cost first). Keep closures that remain feasible and strictly improve
+        the objective. Returns a cloned best solution.
+        """
+        best = self._build_state(solution)
+        improved = True
+
+        while improved:
+            improved = False
+            candidates = list(best["open_facilities"])
+            # try higher fixed-cost facilities first
+            candidates.sort(key=lambda f: -self.fixed_costs[f])
+
+            for f in candidates:
+                if len(best["open_facilities"]) <= 1:
+                    continue
+
+                trial = deepcopy(best)
+                open_set = set(trial["open_facilities"])
+                open_set.discard(f)
+                trial["open_facilities"] = sorted(open_set)
+                trial["open_set"] = set(open_set)
+
+                self._reassign_all_to_open(trial)
+
+                if trial["is_feasible"] and trial["objective"] < best["objective"]:
+                    best = trial
+                    improved = True
+                    break  # restart with updated best
+
+        return self._clone_solution(best)
 
     # ------------------------------------------------------------------ #
     # Reporting                                                          #
@@ -573,7 +683,11 @@ class SSCFLPTabuSearch:
 
             # Perturbation on stagnation
             if stagnation >= self.max_stagnation:
-                current = self.perturb(current)
+                current = self.perturb(current, stagnation)
                 stagnation = 0
 
-        return best_feasible if best_feasible is not None else self._clone_solution(current)
+        if best_feasible is None:
+            return self._clone_solution(current)
+
+        # Post-process feasible solution by greedily dropping facilities
+        return self._greedy_drop(best_feasible)
