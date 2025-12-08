@@ -1,4 +1,4 @@
-SSCFLP Projesi (5 Yaşındaki Bir Çocuğa Anlatır Gibi)
+SSCFLP Projesi
 ===================================================
 
 Hikâye: Mahallede dondurma (veya oyuncak) dağıtmak istiyoruz. Bazı büyük ambarlar (tesisler) var, her birinin taşıyabileceği kadar ürün (kapasite) ve açmak için ödememiz gereken bir kirası (sabit maliyet) var. Mahalledeki çocuklar (müşteriler) dondurma istiyor; her çocuğa götürmenin de bir yol ücreti (atama maliyeti) var. Ama her çocuk yalnızca **tek** ambardan hizmet alabilir (Single Source). Amaç: tüm çocukları doyururken hem kira hem yol ücretini en küçük yapmak.
