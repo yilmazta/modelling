@@ -154,7 +154,7 @@ class SSCFLPTabuSearch:
         return moves
 
     # ------------------------------------------------------------------ #
-    # Delta evaluation (no deepcopy)                                     #
+    # Delta evaluation                                                   #
     # ------------------------------------------------------------------ #
     def _delta_violation(self, load_old: float, load_new: float, cap: float) -> float:
         return max(load_new - cap, 0.0) - max(load_old - cap, 0.0)
