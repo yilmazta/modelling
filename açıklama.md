@@ -1,192 +1,155 @@
-SSCFLP Projesi (5 Yaşındaki Bir Çocuğa Anlatır Gibi)
-===================================================
+SSCFLP Projesi — Güncel Kod Açıklaması (2026)
+=============================================
 
-Hikâye: Mahallede dondurma (veya oyuncak) dağıtmak istiyoruz. Bazı büyük ambarlar (tesisler) var, her birinin taşıyabileceği kadar ürün (kapasite) ve açmak için ödememiz gereken bir kirası (sabit maliyet) var. Mahalledeki çocuklar (müşteriler) dondurma istiyor; her çocuğa götürmenin de bir yol ücreti (atama maliyeti) var. Ama her çocuk yalnızca **tek** ambardan hizmet alabilir (Single Source). Amaç: tüm çocukları doyururken hem kira hem yol ücretini en küçük yapmak.
+Hikâye (kısa): Mahalledeki çocuklara dondurma dağıtıyoruz. Depolarımız (tesisler) var; her birinin açma kirası (sabit maliyet) ve taşıyabileceği maksimum ürün miktarı (kapasite) var. Her çocuğa bir depodan ürün gönderiyoruz; taşımanın da bir bedeli (atama maliyeti) var. Her çocuk **yalnızca tek** depodan hizmet alabilir (Single Source). Amaç: toplam kira + taşıma maliyetini en aza indirmek, kapasiteyi aşmadan (ya da aşarsak ağır ceza ödeyerek).
 
-Bu klasördeki kodlar, `Docs/Project Definition Fall 2025-2026.pdf`’teki bu problemi üç adımda çözüyor:
-1) **Hayalî en iyi ihtimali ölç** (Lower Bound – “daha iyisi olamaz” çizgisi)
-2) **Hızlı bir başlangıç kur** (Greedy initial solution – “ilk yerleşim”)
-3) **Akıllı deneme-yanılma ile iyileştir** (Iterated Tabu Search – “kurallı oyun”)
+Bu klasördeki üç Python dosyası problemi sırasıyla çözüyor:
+1) **Hayali en iyi sınır**: `src/relaxation.py` LP gevşetmesiyle alt sınır (lower bound) bulur.
+2) **Greedy başlangıç**: `src/initial_solution.py` hızlı bir uygulanabilir/uygulanamaz başlangıç kurar.
+3) **Iterated Tabu Search**: `src/tabu_search.py` başlangıcı iyileştirir, tabu listesi ve pertürbasyon kullanır, sonunda pahalı tesisleri kapatmayı dener.
 
-Her adımı aşağıda tek tek ve günlük hayat benzetmesiyle anlattım; en sonda da tüm dosyaları özetledim.
+----------------------------------------------------------------
+1) Lower Bound nasıl kuruluyor? (`src/relaxation.py`)
+----------------------------------------------------------------
+Neden: “Mükemmel dünyada masraf en az kaç olur?” sorusunun cevabını verir. Bu değeri, bulduğumuz gerçek çözümlerle kıyaslayıp ne kadar yaklaştığımızı görürüz.
 
----------------------------------------
-1) Neden Lower Bound buluyoruz, nasıl buluyoruz? (`src/relaxation.py`)
----------------------------------------
-Neden: Bir çocuk lego kulesi yaparken “en az şu kadar parça gerekir” diye düşünür. Lower bound tam bu: Mükemmel bir dünya hayal edip “masraf en az şu kadar olur” diyoruz. Bu, ileride bulduğumuz gerçek çözümlerin ne kadar iyi olduğunu kıyaslamak için bir çıta.
+Nasıl:
+- Karar değişkenleri sürekli: `x[i][j]` (müşteri j’nin ne kadarı tesis i’den servis alıyor, 0–1 arası) ve `y[i]` (tesis i ne kadar açık, 0–1 arası).
+- Amaç: `∑ sabit_maliyet[i]*y[i] + ∑ atama_maliyeti[i][j]*x[i][j]` minimize.
+- Kısıtlar:
+  - Her müşteri tam 1 alır: `∑_i x[i][j] = 1`.
+  - Kapasite: `∑_j talep[j]*x[i][j] ≤ kapasite[i]*y[i]`.
+  - Güçlü bağlama: `x[i][j] ≤ y[i]` (bir çocuk o depodan hizmet alıyorsa depo o oranda “açık” olmalı).
+- Çözüm: `pulp` ile CBC çözücüsü sessiz çalıştırılır; amaç değeri `objective_value` olarak saklanır.
+- Yardımcılar: Açık tesis listesi (`get_open_facilities`), müşterilerin paylaştırılması (`get_customer_assignments`), kapasite kullanım raporu (`get_facility_utilization`) ve özet yazdırma (`print_solution_summary`).
 
-Nasıl: İkisini de biraz yumuşatıyoruz (LP relaxation):
-- Çocukların bir kısmını bir ambara, diğer kısmını başka ambara bölünebilir varsayıyoruz (gerçekte bölünemez, ama hayalde serbest). Kodda bu `x[i][j]` değişkeni (satır 57): müşteri j’nin ne kadarı tesis i’den alıyor, 0 ile 1 arası serbest.
-- Bir tesisi yarım açılmış sayabiliyoruz (`y[i]`, satır 62). Bu da hayal gücü.
-- Ama kurallar duruyor:
-  - Her çocuk toplamda tam 1 almalı (`∑_i x[i][j] = 1`, satır 73).
-  - Her tesisin yükü kapasitesini aşamaz (`∑_j dem[j]*x[i][j] ≤ cap[i]*y[i]`, satır 77).
-  - Bir çocuğa hizmet eden tesis en az o kadar “açık” olmalı (`x[i][j] ≤ y[i]`, satır 81).
-- Amaç fonksiyonu: Kira + yol ücretlerini en aza indirmek (satır 67-70).
-- Çözüm: `pulp` ile sessizce çözüyoruz (`self.prob.solve(...)`, satır 87) ve değer `objective_value` olarak dönüyor (satır 90).
+Analojik ifade: “Ekmekleri bölüp paylaşmak serbest” diye hayal edip minimum masrafı hesaplıyoruz; gerçek dünyada bundan daha ucuza inemeyiz.
 
-Gerçek hayat benzetmesi: “Şimdilik her bakkaldan yarım ekmek alabilirsin” diye hayal ediyoruz. Bu mümkün değil ama bize “en az kaç adımda doyarız?” sorusunun cevabını verir.
-
----------------------------------------
-2) Başlangıç çözümü nasıl kuruluyor? (`src/initial_solution.py`)
----------------------------------------
-Mantık: “Önce en ucuz kira başına en çok kapasite veren depoları aç, sonra her çocuğu en yakındaki açık depoya gönder.”
+----------------------------------------------------------------
+2) Greedy başlangıç çözümü (`src/initial_solution.py`)
+----------------------------------------------------------------
+Mantık: “Kira/kapasite oranı en iyi depoları sırayla aç, toplam kapasite talebi geçince dur; sonra her çocuğu en ucuz açık depoya bağla.”
 
 Adımlar:
-1. Her tesis için verim oranı hesaplanıyor: `R_i = sabit_maliyet / kapasite` (satır 68). Bu, “kira başına kaç ürün taşıyabiliyor?” demek.
-2. Bu oran artan sırayla sıralanıyor (satır 71) ve toplam kapasite tüm talebi karşılayana kadar tesis açılıyor (satır 78-83).
-3. Her çocuk, açık tesisler içinde taşıma maliyeti en düşük olana atanıyor (satır 91-105).
-4. Toplam kira ve yol ücretleri hesaplanıyor, toplam maliyet bulunuyor (satır 106-113).
-5. Kapasite aşımı var mı diye bakılıyor, ihlaller listeleniyor (satır 114-121).
+1. Verim oranı: `R_i = sabit_maliyet[i] / kapasite[i]`.
+2. Depoları `R_i` artan şekilde sırala.
+3. Toplam açık kapasite tüm talebi geçene kadar depo aç.
+4. Her müşteri için açık depolar arasında en düşük atama maliyetine sahip olanı seç ve ata.
+5. Maliyetleri hesapla: sabit + atama = toplam maliyet.
+6. Her açık depo için yük > kapasite ise ihlal miktarını kaydet; `is_feasible` buna göre belirlenir.
+7. Sonuç sözlüğü döner (`open_facilities`, `assignments`, maliyetler, ihlaller, uygulanabilirlik).
+8. `print_solution_summary` çıktısı; kapasite kullanım yüzdelerini ve ihlalleri gösterir.
 
-Gerçek hayat benzetmesi: Pasta dağıtacaksın. Önce “kirası ucuz ama kocaman mutfağı olan pastaneleri” seçiyorsun. Sonra her çocuğa “en yakın pastane”den pasta gönderiyorsun. Eğer bir pastane tepsiye sığmayacak kadar fazla pasta göndermeye kalktıysa “taştı” diye not alıyorsun.
+Analojik ifade: “Kirası ucuz ve büyük mutfaklı pastaneleri sırayla aç, çocukları en yakına gönder; taşma olursa not et.”
 
----------------------------------------
-3) Komşuluk, Tabu Search ve Perturbation nasıl çalışıyor? (`src/tabu_search.py`)
----------------------------------------
-Ana fikir: Bir oyunda piyonları (çocuk-atama kararlarını) ufak ufak oynatarak daha ucuz bir düzen arıyoruz. Aynı hamleyi tekrar tekrar yapmamak için “yasaklı hareket listesi” (tabu) tutuyoruz. Uzun süre ilerleme olmazsa oyunu biraz karıştırıp yeni yollara bakıyoruz (perturbation).
+----------------------------------------------------------------
+3) Tabu Search + Perturbation + Son Temizlik (`src/tabu_search.py`)
+----------------------------------------------------------------
+Ana fikir: Mevcut atamaları küçük hamlelerle değiştir, kısa süre önce geri dönülen hamleleri tabu say, uzun süre iyileşme olmazsa çözümü sars (perturb), sonunda pahalı depoları kapatmayı dene.
 
-3.1 Durum ve puanlama
-- Çözümün içinde: hangi tesisler açık (`open_facilities`), her çocuğun gittiği tesis (`assignments`), her tesisin yükü (`load`), kapasite taşmaları (`total_violation`) var (satır 51-94).
-- Puan (objective): `kira + yol + alpha * toplam_taşma` (satır 72-76). `alpha` kapasiteyi aşmanın ceza katsayısı; ceza büyükse sistem taşmayı istemez.
+3.1 Durum (state) ve skor
+- Dahili alanlar: `open_facilities` (sıralı liste), `open_set` (hızlı bakış), `assignments` (müşteri -> depo), `counts` (her depoya atanan müşteri sayısı), `load` (her deponun toplam talebi), `capacity_violations` (fazlalıklar), `total_fixed_cost`, `total_assignment_cost`, `total_violation`, `objective`.
+- Puanlama: `objective = sabit + atama + alpha * toplam_ihlâl`. Feasible ise `total_violation = 0`, objective = gerçek toplam maliyet. Infeasible ise ceza eklenir.
+- Başlangıç: `_build_state` verilen çözümü liste/array haline çevirir, ataması olan depoyu otomatik “açık” kabul eder, objective ve ihlalleri hesaplar. `lower_bound` varsa saklar.
+- Kopyalama: `_clone_solution` raporlamaya uygun hafif kopya döner (toplam maliyet ve feasibility bilgisi içerir).
 
 3.2 Komşuluk (neighborhood)
-- `beta` kadar (oran) rastgele müşteri seçiyoruz (`_sample_customers`, satır 127-129). Örn. beta=0.4 ise müşterilerin %40’ı çekilişle seçilir.
-- **Relocate**: Bir çocuğu şu anki tesisten başka bir tesise taşıma hamlesi (satır 131-141).
-- **Swap**: İki çocuğun tesislerini karşılıklı değiştirme hamlesi (satır 143-155).
-- Tüm bu hamleler karıştırılıyor (`get_neighbors`, satır 618-621).
+- Örnekleme: `_sample_customers` `ceil(beta * n)` kadar müşteriyi rastgele çeker.
+- Relocate hamleleri: Seçilen her müşteri j için mevcut depo k’dan tüm diğer depolara l taşımayı dener (`_relocate_moves`).
+- Swap hamleleri: Seçilen müşteri çiftleri (j1, j2) farklı depolardaysa yer değişimini dener (`_swap_moves`).
+- Komşular: `get_neighbors` relocate + swap listesini karıştırır (shuffle) ve döner.
 
-3.3 Hamle değerlendirme (delta)
-- Bir hamle yapılırsa yeni maliyet ne olur, kapasite taşması nasıl değişir, hızlıca hesaplanıyor (`_evaluate_move_delta`, satır 163-232). Böylece her hamleyi uygulamadan “provada” görüyoruz.
+3.3 Hızlı değerlendirme (delta)
+- `_evaluate_move_delta` çözümü değiştirmeden hamlenin etkisini hesaplar.
+- Relocate:
+  - Atama maliyeti farkı (`delta_assign`).
+  - Sabit maliyet farkı: Yeni depo ilk kez açılıyorsa sabit maliyet eklenir; mevcut depo boşalıyorsa sabit maliyet düşülür.
+  - İhlal farkı yalnızca etkilenen depolar (k, l) için hesaplanır.
+  - Yeni objective = (sabit + atama + alpha * ihlal).
+- Swap: Benzer ama sabit maliyet değişmez; iki deponun yük değişimleri ve ihlal farkı hesaplanır.
+- Dönen değer: `(yeni_objective, yeni_feasible_mi, delta_objective)`.
 
-3.4 Tabu listesi ve dinamik süre
-- Aynı müşteriyi kısa sürede eski tesisine döndürmek tabu. `tabu_dict` bunu tutuyor (satır 43-47, 326-335).
-- Tabu süresi (tenure) dinamik: Aynı hamle çok yapıldıysa süresi uzuyor (`_dynamic_tenure`, satır 337-347). Hamle sıklıkları `move_frequencies` ile tutuluyor.
-- İstisna (aspiration): Bir tabu hamle gerçekten daha iyi ve **feasible** bir çözüme götürüyorsa yine de yapılabiliyor (satır 659-666).
+3.4 Hamleyi uygulama ve tabu
+- `_apply_move_in_place` seçilen hamleyi gerçekten uygular; maliyetler, yükler, ihlaller, açık set ve objective güncellenir.
+- Tabu yapısı: `tabu_dict[(müşteri, önceki_depo)] = sona_erecek_iter`. Hem relocate hem swap için ilgili müşteri-eski depo ikilileri tutulur.
+- Tenure: `_get_tabu_tenure` min–max aralığında rastgele tam sayı döner (`tabu_tenure_min`, `tabu_tenure_max`). Dinamik frekans hesabı yok; basit rastgele süre var.
+- `_is_tabu` seçilen hamlenin tabu olup olmadığına bakar. Aspiration: Hamle tabu olsa bile **uygun** ve şimdiye kadarki en iyi objective’i iyileştiriyorsa kabul edilir.
+- `_update_tabu` seçilen hamleyi tabu listesine ekler.
 
-3.5 Perturbation (karıştırma)
-- Uzun süre iyileşme yoksa (`stagnation >= max_stagnation`, satır 684-688), çözüm biraz sarsılıyor (`perturb`, satır 481-511).
-- Hafif karıştırmalar (stagnation küçükken): bir tesis kapat, aç, değiştir; atamaları karıştır vb. (`_op1`…`_op5`, satır 395-455).
-- Sert karıştırmalar (stagnation büyükken): 1 kapat 2 aç veya tersi (`_op6`, `_op7`, satır 456-479).
-- Her karıştırmadan sonra “açık tesislere tekrar en ucuzdan ata” ile düzen tazeleniyor (`_reassign_all_to_open`, satır 367-394).
+3.5 Ceza katsayısı güncellemesi
+- `_update_alpha`: Eğer mevcut çözüm feasible ise `alpha` `1/(1+epsilon)` oranında azaltılır; değilse `(1+epsilon)` ile çarpılır. Aşırı değerleri önlemek için `[1e-6, 1e9]` aralığında sıkıştırılır.
 
-3.6 Ana döngü
-- `run` fonksiyonu (satır 623-694) şu akışta:
-  1. Başlangıç çözümünü iç duruma çevir (`_build_state`).
-  2. Komşu hamleleri tara, tabu kontrolü yap, en iyi hamleyi uygula.
-  3. Her adımda `alpha` cezasını güncelle (`_update_alpha`, satır 112-123): çözüm uygun ise alpha biraz düşer, değilse artar.
-  4. En iyi **uygun** çözümü hatırla.
-  5. Çok duraksarsak perturbation ile sars.
-  6. Döngü bitince son bir “kira pahalı tesisi kapatmayı dene” adımıyla temizle (`_greedy_drop`, satır 513-545).
+3.6 Perturbation (çözümü sarsma)
+- Amaç: Stagnation (art arda iyileşmeme) durumunda farklı bölgeye sıçramak.
+- Operatörler:
+  - `_op1_close`: Rastgele bir açık depoyu kapat (en az bir depo kalsın).
+  - `_op2_open`: Rastgele bir kapalı depoyu aç.
+  - `_op3_swap_open_close`: Açık bir depoyu kapatıp rastgele kapalı bir depoyu aç.
+  - `_op4_shuffle_assignments`: Açık seti koruyup müşterileri rastgele açık depolara dağıt, ardından yeniden en ucuzdan ata.
+  - `_op5_close_half`: Açık depoların yaklaşık yarısını rastgele kapat (en az bir depo kalsın).
+  - `_op6_close1_open2`: Tanımlı ama mevcut pertürbasyon akışında çağrılmıyor.
+  - `_op7_open1_close2`: Bir kapalı depoyu aç, sonra mümkünse iki depoyu kapat (en az bir depo kalsın); sabit maliyeti düşürmeye odaklı sert hamle.
+- `perturb`: Stagnation < `max_stagnation` ise 1–5 arasından rastgele seçer; eşik veya üstü ise **hep `_op7`** kullanır. Sonrasında `_reassign_all_to_open` ile herkesi mevcut açık set içindeki en ucuz depoya yeniden atar, maliyet/ihlâl/feasibility baştan hesaplanır.
 
-Gerçek hayat benzetmesi: Lego şehrinde çocukları evlere dağıtıyorsun. Bir çocuğu başka eve taşımak (relocate) ya da iki çocuğun evlerini değiştirmek (swap) gibi hamleler yapıyorsun. “Az önce bu çocuğu oraya yollamıştın, hemen geri gönderme” diye kısa süreli yasak koyuyorsun (tabu). Uzun süre yeni güzel bir düzen bulamazsan, “herkes kalksın biraz yer değiştirsin” diyerek odayı karıştırıyorsun (perturbation). En son, “bu pahalı ev boş kalsın, çocukları diğer evlere taşıyalım” diyerek maliyeti düşürüyorsun.
+3.7 Son temizlik (greedy drop)
+- `_greedy_drop`: En iyi feasible çözüm üzerinde çalışır. Sabit maliyeti yüksek depolardan başlayarak bir depoyu kapatmayı dener, ardından herkesi açık depolara en ucuzdan yeniden atar. Feasible kalır ve objective iyileşirse kapanış kalıcı olur; iyileşme bittiğinde çıkan çözüm clone’lanarak döner.
 
----------------------------------------
-4) Parametrelerin mantığı ve kodda nerede kullanılıyor?
----------------------------------------
-- **alpha (varsayılan 1000.0)**: Kapasite aşım cezası katsayısı. Ne kadar büyükse taşmak çok pahalı olur. Kullanım: amaç fonksiyonunda (`objective`, satır 72-76) ve tüm delta hesaplarında (`new_obj = ... + alpha * violation`, örn. satır 205-230). Güncelleme: `_update_alpha` (satır 112-123) uygun çözümde alpha’yı biraz azaltır, uygunsuzda artırır. Benzetme: Halıya su dökmenin cezası; çok yüksekse kimse su dökmek istemez.
-- **epsilon (varsayılan 0.1)**: Alpha’nın ne hızla değişeceğini belirleyen oran. `_update_alpha` içinde `factor = 1+epsilon` (satır 117-122). Benzetme: Cezayı artırıp azaltırken atılan adım büyüklüğü; 0.1 demek %10 art/azalt.
-- **beta (varsayılan 0.4)**: Her iterasyonda kaç müşterinin komşulukta deneneceğini belirleyen örnekleme oranı. `_sample_customers` (satır 127-129) `ceil(beta * n)` kadar müşteri seçer. Benzetme: Sınıfta kaç çocuğun yerini değiştirmeyi deniyorsun; beta yükseldikçe daha çok çocukla oynarsın (daha büyük komşuluk, daha pahalı hesap).
-- **max_stagnation (varsayılan 40)**: Kaç ardışık “iyileşmedi” adımından sonra pertürbasyon yapılacağını söyler. Ana döngüde kontrol (satır 684-688); ayrıca seçilecek operatörün hafif/sert olmasını belirler (`perturb`, satır 481-505). Benzetme: Oyun sıkıcılaşınca “hadi baştan karıştıralım” deme eşiği.
-- **max_iterations (varsayılan 300)**: Ana döngünün üst sınırı (`run`, satır 623, 638). Benzetme: Oyunu kaç tur oynayacağın.
-- **random_seed**: Rastgeleliğin tekrar edilebilir olması için kullanılıyor (satır 41). Benzetme: Zarın hep aynı sırayla düşmesi için hafif manyetik zar kullanmak.
+3.8 Raporlama
+- `print_detailed_report`: Toplam maliyet, feasibility, açık depo sayısı, alt sınır farkı (lower_bound varsa) ve her depo için yük, kapasite, atanan müşteriler, ihlaller listesini yazar. `lower_bound` sağlanmadıysa boşluk “N/A” olarak belirtilir.
 
----------------------------------------
-5) Adım adım akış (Project Definition’a göre)
----------------------------------------
-1. **Veriyi oku** (notebooklarda ilk hücreler): Kapasiteler, talepler, sabit maliyetler, taşıma maliyetleri.
-2. **Hayalî en iyi değer (Lower Bound)**: `SSCFLPLowerBound.solve()` ile LP çözülür, çıta değeri alınır.
-3. **İlk çözüm**: `SSCFLPInitialSolution.construct()` ile ucuz/kârlı tesisler açılır, çocuklar en ucuz açık tesise atanır.
-4. **Tabu Search’ü başlat**: `SSCFLPTabuSearch.run(initial, lower_bound=...)` çağrılır.
-   - Her 100 adımda özet basılır (satır 639-645).
-   - Komşu hamleler denenir, tabu/aspiration uygulanır.
-   - `alpha` uyarlanır; stagnation sayacı tutulur; gerekirse perturbation yapılır.
-5. **Son düzenleme**: `run` bittiğinde `greedy_drop` pahalı tesisleri kapatmayı dener.
-6. **Raporla**: `print_detailed_report` çözümü insan okuyacağı şekilde listeler.
+3.9 Ana döngü (`run`)
+- Opsiyonel: Kullanıcı `lower_bound` verirse başlangıç sözlüğüne eklenir.
+- Başlangıç: `_build_state(initial)` ile dahili durum kurulur.
+- Başlangıç feasible ise `best_feasible` ve objective saklanır; değilse `best_feasible` None başlar.
+- Her 100 iterasyonda kısa özet log basılır.
+- Her iterasyonda:
+  1) Komşular üret ve karıştır.
+  2) Tabu kontrolü + aspiration ile en düşük objective’li hamleyi seç.
+  3) Hamleyi uygula, tabu listesine ekle, `alpha`yı feasibility’ye göre güncelle.
+  4) Feasible ve objective iyileştiriyorsa en iyi çözüme yaz, stagnation=0; aksi halde stagnation++.
+  5) `stagnation >= max_stagnation` olursa `perturb` çağrılır, stagnation sıfırlanır.
+- Döngü biterse:
+  - Hiç feasible bulunamadıysa mevcut çözümün klonu döner (infeasible olabilir).
+  - Feasible bulunduysa `_greedy_drop` ile son kapanış temizliği yapılıp döner.
 
----------------------------------------
-6) Dosyaları tek tek özet
----------------------------------------
-- `src/relaxation.py`: LP gevşetmesiyle lower bound hesaplar; `pulp` kullanır.
-- `src/initial_solution.py`: Greedy başlangıç kurar; tesisleri verim oranına göre açar, çocukları en ucuz açık tesise yollar.
-- `src/tabu_search.py`: Tüm iyileştirme burada; tabu listesi, dinamik tabu süresi, ceza güncellemesi, komşuluk (relocate/swap), perturbation, son kapanış temizliği.
-- `51-instance.ipynb`, `55-instance.ipynb`, `63-instance.ipynb`: Üç örnek veri seti için uçtan uca çalıştırma; okuma → lower bound → initial → tabu → rapor.
+Analojik ifade: Lego şehrinde çocukları evlere dağıtıyorsun; yakın zamanda geri dönüşü yasaklıyorsun (tabu). Uzun süre iyileşme yoksa “herkes biraz yer değiştiriyor” diye odayı karıştırıyorsun. Oyun bittiğinde “kirası pahalı evleri kapatabiliyor muyuz?” diye bakıp son kez düzenliyorsun.
+
+----------------------------------------------------------------
+4) Parametre rehberi (varsayılanlar)
+----------------------------------------------------------------
+- `max_iterations=300`: Ana döngü üst sınırı.
+- `alpha=1000.0`: Kapasite ihlâl ceza katsayısı (objective’ta çarpılır).
+- `epsilon=0.1`: `alpha` artış/azalış oranı (±%10).
+- `beta=0.4`: Her iterasyonda rastgele denenecek müşteri oranı (`ceil(beta*n)`).
+- `max_stagnation=40`: Bu kadar ardışık iyileşmeme sonrası pertürbasyon.
+- `tabu_tenure_min=10`, `tabu_tenure_max=30`: Tabu süresi için alt/üst sınır; her hamlede bu aralıktan rastgele seçilir.
+- `random_seed=None`: Verilirse tüm rastgelelik tekrar üretilebilir olur.
+
+----------------------------------------------------------------
+5) Uçtan uca akış (notebooklarda önerilen sıra)
+----------------------------------------------------------------
+1. Veriyi oku (kapasiteler, talepler, sabit maliyetler, atama maliyetleri).
+2. `SSCFLPLowerBound.solve()` ile alt sınırı hesapla.
+3. `SSCFLPInitialSolution.construct()` ile greedy başlangıç kur.
+4. `SSCFLPTabuSearch.run(initial, lower_bound=lb)` ile iterated tabu’yu çalıştır:
+   - Her 100 adımda kısa log; tabu/aspiration uygulanır; alpha güncellenir; duraksamada perturbation devreye girer.
+5. Çıkışta `_greedy_drop` sonrası elde edilen çözümü `print_detailed_report` ile yazdır.
+
+----------------------------------------------------------------
+6) Dosya rehberi
+----------------------------------------------------------------
+- `src/relaxation.py`: LP gevşetmesiyle lower bound; CBC çözücü, raporlama yardımcıları.
+- `src/initial_solution.py`: Greedy başlangıç; oran sıralama, talebi karşılama, ihlâl kontrolü, özet yazdırma.
+- `src/tabu_search.py`: İyileştirme motoru; tabu listesi (rastgele tenure), delta hesapları, pertürbasyon, son kapanış temizliği, detaylı rapor.
+- Notebooklar (`*-instance.ipynb`): Örnek veri setleriyle uçtan uca demo.
 - `README.md`: Kısa proje tanıtımı ve çalışma talimatı.
 
----------------------------------------
-7) Kısa gerçek hayat analojisi özet
----------------------------------------
-- Lower bound: “Hayal dünyasında, herkes ekmeği bölüşebilir; en az kaç liraya doyarız?”
-- Initial solution: “Önce kira/kapasite oranı en iyi fırınları aç, herkesi en yakına gönder.”
-- Tabu search: “Herkesi az az yer değiştir, son hamleleri unutmayacak bir yasak listesi tut, sıkılırsan oyunu karıştır, pahalı fırınları kapatmayı son kez dene.”
+----------------------------------------------------------------
+7) Kısa gerçek hayat analojisi
+----------------------------------------------------------------
+- Lower bound: “Herkes ekmeği paylaşsa en az kaç liraya doyarız?”
+- Greedy başlangıç: “Kirası ucuz ve kapasitesi büyük pastaneleri aç, herkesi en yakına gönder.”
+- Tabu + perturbation: “Son hamleleri bir süre unut, oyun sıkıcılaşınca ortalığı karıştır, sonunda pahalı pastaneyi kapatmayı dene.”
 
-Bu dosya, proje kodlarını arkadaşlarının kolayca takip etmesi için hazırlanmıştır. Kod içi satır referansları yukarıda verilmiştir; detaylı davranış için ilgili `src` dosyalarındaki fonksiyonlara bakabilirsin.
-
----------------------------------------
-8) Satır satır kod açıklamaları (`src` klasörü)
----------------------------------------
-
-Not: Satır numaraları mevcut dosya sürümüne göredir; küçük kaymalar olabilir. Her satır aralığını kısa yorumla açıkladım.
-
-8.1 `src/initial_solution.py`
-- 1: `numpy` importu.
-- 4-8: Sınıf tanımı ve docstring; problemin ne yaptığı.
-- 10-35: Kurucu (`__init__`); giriş verilerini saklar, çözüm alanlarını None başlatır.
-- 37-45: Çözüm alanlarının açıklaması (açık tesisler, atamalar, maliyetler, ihlaller).
-- 46-66: `construct` başlar; algoritma adımlarını belgeleyen docstring.
-- 67: Verim oranı hesabı `fixed_costs / capacities`.
-- 70-72: Tesisleri verime göre sırala.
-- 73-83: Toplam kapasite talebi geçene kadar tesis aç.
-- 84-90: Açık tesis kümesi; atama sözlüğü ve talep sayaçları hazırla.
-- 91-105: Her müşteri için en ucuz açık tesisi bul ve ata; tesis yükünü güncelle.
-- 106-113: Toplam sabit ve atama maliyeti, toplam maliyet hesapla.
-- 114-121: Kapasite aşımı kontrolü ve ihlal sözlüğü.
-- 122-132: Feasible bayrağı, çözümü sözlük olarak döndür.
-- 134-171: `print_solution_summary`; özet metin çıktısı, kapasite kullanım hesapları.
-
-8.2 `src/relaxation.py`
-- 1-2: `numpy`, `pulp` importları.
-- 5-9: Sınıf ve docstring.
-- 11-37: Kurucu; boyutlar ve verileri saklar, LP değişkenleri başlatılacak alanlar.
-- 44-93: `solve` fonksiyonu.
-  - 54: LP problemi minimize olarak kuruluyor.
-  - 57-61: `x[i][j]` sürekli değişkenleri (0-1 arası) tanımlanıyor.
-  - 62-64: `y[i]` sürekli açma değişkeni tanımlanıyor.
-  - 66-70: Amaç: sabit + atama maliyeti toplamı.
-  - 72-75: Her müşteri tam 1 olmalı kısıtı.
-  - 76-79: Kapasite kısıtı (talep ≤ kapasite*y).
-  - 81-84: Güçlü bağlama kısıtı `x ≤ y`.
-  - 86-88: CBC çözücü çağrısı (sessiz).
-  - 89-93: Amaç değeri saklanır ve döndürülür.
-- 95-118: `get_open_facilities`; y değerlerinden açık tesis listesi.
-- 119-144: `get_customer_assignments`; her müşteri için anlamlı `x` değerlerini döndürür.
-- 146-166: `get_facility_utilization`; kullanılan kapasite ve yüzde.
-- 168-197: Toplam talep ve kapasite kullanım hesaplayan yardımcılar.
-- 199-247: `print_solution_summary`; alt fonksiyonları çağırarak rapor basar.
-
-8.3 `src/tabu_search.py`
-- 1-8: Importlar (`math`, `random`, `defaultdict`, `deepcopy`, `typing`, `numpy`).
-- 10-15: Sınıf ve kısa docstring.
-- 16-47: Kurucu; parametrelerin saklanması, RNG, tabu ve frekans sözlükleri.
-- 51-95: `_build_state`; verilen başlangıç çözümünden dahili mutasyon yapılabilir durum kurar (açık set, yükler, maliyetler, ihlaller, objective).
-- 96-111: `_clone_solution`; saklamak için hafif kopya üretir.
-- 112-123: `_update_alpha`; epsilon oranıyla ceza katsayısını arttırır/azaltır, min-max sınırlar.
-- 127-129: `_sample_customers`; beta oranında müşteri seçer.
-- 131-141: `_relocate_moves`; seçilen müşteriler için tüm olası yeni tesislere taşıma hamleleri üretir.
-- 143-155: `_swap_moves`; seçilen müşterilerden ikililer için tesis değiş tokuş hamleleri.
-- 160-162: `_delta_violation`; kapasite ihlali değişimini hesaplar.
-- 163-232: `_evaluate_move_delta`; relocate/swap hamlesinin maliyet, ihlal ve feasibility etkisini simüle eder, uygulamadan döner.
-- 237-320: `_apply_move_in_place`; seçilen hamleyi gerçek çözüme uygular, maliyetleri, açık seti, yükleri, ihlalleri ve objective’i günceller.
-- 324-335: `_is_tabu`; hamlenin tabu olup olmadığını kontrol eder (müşteri, önceki tesis anahtarı).
-- 337-347: `_dynamic_tenure`; hamle frekansına göre tabu süresini belirler.
-- 348-363: `_update_tabu`; yapılan hamleyi tabu sözlüğüne ekler, frekansları artırır.
-- 365-394: `_reassign_all_to_open`; açık tesislere en ucuzdan yeniden atama, maliyet ve ihlal reseti.
-- 395-479: Perturbation operatörleri `_op1`…`_op7`; tesis aç/kapat/karıştır varyantları.
-- 481-511: `perturb`; stagnation’a göre hafif/sert operatör seçer, sonra yeniden atar.
-- 513-545: `_greedy_drop`; pahalı tesisleri kapatmayı deneyerek son iyileştirme yapar.
-- 550-614: `print_detailed_report`; bulunan çözümün okunaklı raporu.
-- 618-621: `get_neighbors`; relocate+swap hamle listesini döndürür.
-- 623-694: `run`; ana iterasyon döngüsü, komşu tarama, tabu/aspiration, alpha güncelleme, stagnation sayacı, perturbation tetikleme ve final greedy_drop.
-
-Bu satır özetleri, her kod parçasının ne yaptığını hızlıca bulman için hazırlandı. Daha derin inceleme için ilgili fonksiyonların içinde yorumlarda belirtilen matematiksel karşılıkları takip edebilirsin.
+Bu dosya, güncel kodun davranışını hızlıca kavramak için hazırlandı. Ayrıntı için ilgili fonksiyonların içine bakabilir veya `print_*` yardımcılarını çalıştırarak çıktıyı gözlemleyebilirsin.
 

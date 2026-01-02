@@ -1,6 +1,5 @@
 import math
 import random
-from collections import defaultdict
 from copy import deepcopy
 from typing import Any, Dict, List, Tuple
 
@@ -24,6 +23,8 @@ class SSCFLPTabuSearch:
         epsilon: float = 0.1,
         beta: float = 0.4,
         max_stagnation: int = 40,
+        tabu_tenure_min: int = 10,
+        tabu_tenure_max: int = 30,
         random_seed: int | None = None,
     ) -> None:
         self.m = len(capacities)
@@ -38,12 +39,12 @@ class SSCFLPTabuSearch:
         self.epsilon = epsilon
         self.beta = beta
         self.max_stagnation = max_stagnation
+        self.tabu_tenure_min = tabu_tenure_min
+        self.tabu_tenure_max = tabu_tenure_max
         self.rng = random.Random(random_seed)
 
         # Tabu structure: (customer, previous_facility) -> expiration iteration
         self.tabu_dict: Dict[Tuple[int, int], int] = {}
-        # Move frequencies for dynamic tenure: (customer, new_facility) -> count
-        self.move_frequencies: Dict[Tuple[int, int], int] = defaultdict(int)
 
     # ------------------------------------------------------------------ #
     # State helpers                                                      #
@@ -111,11 +112,11 @@ class SSCFLPTabuSearch:
 
     def _update_alpha(self, feasible: bool) -> None:
         """
-        Dynamic penalty update (Section 3.2.1).
+        Simple dynamic penalty update.
         Increase alpha when infeasible, decrease when feasible.
         """
         factor = 1.0 + self.epsilon
-        alpha_min, alpha_max = 1e-6, 1e6  # clamp to avoid overflow / stagnation
+        alpha_min, alpha_max = 1e-6, 1e9  # Clamp to avoid overflow / stagnation
         if feasible:
             self.alpha = max(alpha_min, self.alpha / factor)
         else:
@@ -334,32 +335,23 @@ class SSCFLPTabuSearch:
             return iteration < self.tabu_dict.get((j1, k), -1) or iteration < self.tabu_dict.get((j2, l), -1)
         return False
 
-    def _dynamic_tenure(self, key: Tuple[int, int]) -> int:
+    def _get_tabu_tenure(self) -> int:
         """
-        theta = 7 + m * (a / u) where:
-          a = frequency of this move key
-          u = max frequency among all moves (avoid division by zero)
+        Simple randomized static tabu tenure.
+        Returns a random tenure value within the specified range.
         """
-        a = self.move_frequencies[key]
-        u = max(self.move_frequencies.values()) if self.move_frequencies else 1
-        theta = 7.0 + self.m * (a / max(u, 1))
-        return max(1, int(round(theta)))
+        return self.rng.randint(self.tabu_tenure_min, self.tabu_tenure_max)
 
     def _update_tabu(self, move: Tuple[str, Tuple], iteration: int) -> None:
         move_type, data = move
+        tenure = self._get_tabu_tenure()
         if move_type == "relocate":
             j, k, l = data
-            key = (j, l)
-            self.move_frequencies[key] += 1
-            tenure = self._dynamic_tenure(key)
             self.tabu_dict[(j, k)] = iteration + tenure
         elif move_type == "swap":
             j1, j2, k, l = data
-            for j, prev, dest in ((j1, k, l), (j2, l, k)):
-                key = (j, dest)
-                self.move_frequencies[key] += 1
-                tenure = self._dynamic_tenure(key)
-                self.tabu_dict[(j, prev)] = iteration + tenure
+            self.tabu_dict[(j1, k)] = iteration + tenure
+            self.tabu_dict[(j2, l)] = iteration + tenure
 
     # ------------------------------------------------------------------ #
     # Perturbation operators (Section 3.3)                               #
@@ -480,9 +472,9 @@ class SSCFLPTabuSearch:
 
     def perturb(self, solution: Dict[str, Any], stagnation_counter: int) -> Dict[str, Any]:
         """
-        Hybrid perturbation (Section 3.3).
-        - If stagnation_counter < max_stagnation: pick one of Operators 1-5.
-        - Else: pick one of Operators 6-7 (strong).
+        Deterministic perturbation strategy.
+        - If stagnation_counter < max_stagnation: Randomly choose from Simple Operators (1-5)
+        - Else (stagnation reached): FORCE Operator 7 (Open 1, Close 2) to reduce fixed costs
         Always uses sets to avoid duplicates and reassigns at the end.
         """
         new_sol = deepcopy(solution)
@@ -496,12 +488,12 @@ class SSCFLPTabuSearch:
             self._op4_shuffle_assignments,
             self._op5_close_half,
         ]
-        strong_ops = [self._op6_close1_open2, self._op7_open1_close2]
 
         if stagnation_counter < self.max_stagnation:
+            # Use Simple Operators randomly
             op = self.rng.choice(simple_ops)
         else:
-            op = self.rng.choice(strong_ops)
+            op = self._op7_open1_close2
 
         op(new_sol)
         # Ensure full recomputation and duplicate safety
