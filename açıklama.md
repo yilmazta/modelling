@@ -1,5 +1,10 @@
+<<<<<<< HEAD
 SSCFLP Projesi — Güncel Kod Açıklaması (2026)
 =============================================
+=======
+SSCFLP Projesi
+===================================================
+>>>>>>> 2921271a222f0ddaa9a928e9229311fbc67d7e35
 
 Hikâye (kısa): Mahalledeki çocuklara dondurma dağıtıyoruz. Depolarımız (tesisler) var; her birinin açma kirası (sabit maliyet) ve taşıyabileceği maksimum ürün miktarı (kapasite) var. Her çocuğa bir depodan ürün gönderiyoruz; taşımanın da bir bedeli (atama maliyeti) var. Her çocuk **yalnızca tek** depodan hizmet alabilir (Single Source). Amaç: toplam kira + taşıma maliyetini en aza indirmek, kapasiteyi aşmadan (ya da aşarsak ağır ceza ödeyerek).
 
@@ -153,3 +158,58 @@ Analojik ifade: Lego şehrinde çocukları evlere dağıtıyorsun; yakın zamand
 
 Bu dosya, güncel kodun davranışını hızlıca kavramak için hazırlandı. Ayrıntı için ilgili fonksiyonların içine bakabilir veya `print_*` yardımcılarını çalıştırarak çıktıyı gözlemleyebilirsin.
 
+---------------------------------------------------------------------------------------------------------------------------
+Operatörler (1..7)
+
+_op1_close — "Rastgele 1 open kapat"
+Ne yapar: new_sol["open_facilities"] içinden rastgele bir açık tesisi seçip kapatır (sadece eğer en az 2 açık tesis varsa).
+Kısıt: açık tesis sayısı 1'e düşürülmez (en az bir açık tesis bırakılır).
+Etki: tesis sayısını bir azaltır; bu durum atama maliyetlerini artırıp sabit maliyetleri azaltabilir. Sonrasında reassign ile müşteriler en iyi kalan açık tesislere yönlendirilir.
+Amaç: hafif çeşitlendirme / yoğunlaştırma dengesi (küçük değişiklik).
+_op2_open — "Rastgele 1 closed aç"
+Ne yapar: şu an kapalı olan tesislerden rastgele birini açar (eğer kapalı varsa).
+Etki: açık tesis sayısını bir artırır; sabit maliyet artar, atama maliyetleri azalabilir.
+Amaç: kapasite/atama maliyetlerini düzeltmek veya yeni bölgeler keşfetmek.
+_op3_swap_open_close — "Rastgele 1 open kapat, 1 closed aç (swap)"
+Ne yapar: mevcut açık tesislerden rastgele birini kapatıp, kapalı tesislerden rastgele birini açar (her iki küme doluysa).
+Etki: açık-set'te tek bir tesis değişimi yapar — sabit maliyet değişimi küçük olabilir ama müşteri atamalar değişir.
+Amaç: mevcut açık tesis kombinasyonunu hafifçe değiştirmek; bölgesel yeniden yapılandırma.
+_op4_shuffle_assignments — "Açık tesisler korunur, rastgele atama (sonrasında yeniden atama)"
+Ne yapar (kodda):
+Önce tüm müşteri atamalarını rastgele açık tesisler arasından seçerek doldurur (counts, load, assign_cost güncellenir).
+Ardından fonksiyon içinde self._reassign_all_to_open(new_sol) çağırılır — bu, her müşteriyi açık tesisler arasından EN UCUZ tesisine yeniden atar ve önceki rastgele atamayı geçersiz kılar.
+Net etki: Sonuçta new_sol müşterileri yine en ucuz açık tesise atanmış olur; dolayısıyla rastgele atamanın bir etkisi kalmaz. Ancak perturb() dışındaki diğer akışlar veya farklı versiyonlarda rastgele atamanın kalıcı olması istenmiş olabilir.
+Amaç (muhtemel niyet): atamaları karıştırıp ardından yeniden dengeli bir atamaya izin vererek çeşitlendirme. (Gerçekte kodda reassign ile rastgele atama iptal ediliyor — bunu dikkat etmek gerek.)
+Not: Kodun şu haliyle _op4 içindeki rastgele atama adımı gereksiz görünüyor çünkü hemen sonra greedy reassign yapılıyor.
+_op5_close_half — "Açık tesislerin yaklaşık yarısını kapat"
+Ne yapar: eğer açık tesis sayısı > 1 ise, açık tesislerin yaklaşık yarısını (k = max(1, len(open)//2)) rastgele seçip kapatır; kapatma sırasında yine en az 1 açık tesis bırakılır.
+Etki: Açık tesis sayısını önemli ölçüde azaltır; bu güçlü bir perturbasyondur (çok sayıda müşteri yeniden atanmak zorunda kalır).
+Amaç: orta-şiddette çeşitlendirme — lokal minimumlardan sıyrılmak için daha büyük bir değişiklik.
+_op6_close1_open2 — "1 open kapat, 2 closed aç (güçlü)"
+Ne yapar: bir açık tesis rastgele kapatılır (varsa) ve kapalı tesislerden en fazla 2 tane rastgele açılır.
+Etki: net olarak açık tesis sayısını bir artırır ( -1 + up to +2 = +1 veya +0). Oldukça agresif bir değişiklik; açık set hem daraltılıp hem genişletilebiliyor.
+Amaç: stagnasyon durumunda daha agresif çeşitlendirme — yeni bölgelere açılmak ve mevcut kötü yapılandırmaları bozmak.
+_op7_open1_close2 — "1 closed aç, 2 open kapat (güçlü)"
+Ne yapar: önce kapalı tesislerden rastgele 1 açar (eğer kapalı varsa). Sonra açık setten (en az 1 açık kalacak şekilde) 1 veya 2 tesis rastgele kapatır (close_count=min(2, max(0, len(open)-1))).
+Etki: net olarak açık tesis sayısını azaltma eğiliminde olabilir (önce +1 sonra -1 veya -2). Oldukça agresif; bazı bölgeleri kapatıp farklı bir tesis açarak büyük yeniden atamalar tetikler.
+Amaç: stagnasyon durumunda radikal yeniden düzenleme — hem çeşitlendirme hem spesifik yapıların yıkılması.
+Ek detaylar / kullanışlı gözlemler
+
+Basit vs güçlü operatörler: perturb() basitleri (op1..op5) normal stagnasyonlarda, güçlüleri (op6..op7) uzun stagnasyonlarda kullanır. Bu klasik bir strateji: önce hafif değişikliklerle iyileşme denenir; uzun süre ilerleme yoksa daha büyük bozmalar yapılır.
+Her operasyon rastgele seçimlere dayanır (self.rng), dolayısıyla her çalıştırmada farklı etkiler üretilir.
+perturb() sonunda kesinlikle self._reassign_all_to_open çağrılır — bu, yalnızca open_facilities değişikliklerinin kalıcı olacağı, müşteri atamalarının her zaman bu yeni açık tesislere göre yeniden belirleneceği anlamına gelir.
+_op4 içindeki rastgele atama + hemen kapanıp greedy reassign davranışı muhtemelen bir küçük kodsel tutarsızlıktır: rastgele atama yapılmış olsa bile hemen üzerine greedy reassign ile kaybolur.
+Tüm operatörler "open_facilities" set'ini garantiye alır (en az 1 açık tesis bırakmak gibi) — bu, geçersiz çözümler oluşmasını engeller.
+Pratik etkiler / ne zaman hangi operatör işe yarar
+
+Küçük lokal düzeltmeler: op1, op2, op3 — yerel iyileştirme için uygundur.
+Orta çaplı yeniden düzenleme: op5 (yarısını kapat) — radikal ama hala kontrollü.
+Agresif çeşitlendirme (stagnasyonda): op6, op7 — yeni bölgeleri keşfetmek, yerel tuzaklardan çıkmak.
+op4 mantıklı yazılsaydı atamalar üzerinden çeşitlendirme sağlar; mevcut implementasyonda etkisi sınırlı çünkü reassign ile siliniyor.
+İyileştirme önerileri (opsiyonel)
+
+_op4: eğer amaç gerçekten rastgele atama yaratıp onu değerlendirmekse, _reassign_all_to_open çağrısını op4 içinde değil yalnızca perturb() sonunda yapmak mantıklı; ya da op4'ün rastgele ataması korunmalı (yani op4 sonunda greedy reassign iptal edilmeli) — aksi halde rastgele adım boşa gider.
+Operatör ağırlıkları: şu an seçim tamamen eşit olasılıklı; belirli problemlerde bazı operatörler daha faydalıdır. Ağırlıklı seçim (örn. op5 daha seyrek) denenebilir.
+Güçlü operatörleri parametrik yapmak: op6/op7 şiddetini (açılacak/kapancak tesis sayısı) parametreleştirebilirsiniz.
+Determinizm kontrolü için RNG seed ve reproducibility logları tutulabilir.
+İsterseniz her bir operatörün öncesi/sonrası open_facilities ve birkaç müşteri ataması gösteren küçük örnek (örnek veri üzerinde) hazırlayıp adım adım nasıl değiştiğini gösterebilirim. Hangi boyutta (ör. m=10, n=20) bir örnek istersiniz?
